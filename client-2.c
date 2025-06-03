@@ -23,10 +23,8 @@ static char board_arr[BOARD_SIZE][BOARD_SIZE];
 #define INF 1000000000
 
 static struct timespec start_time;
-static const double TIME_LIMIT = 2.8; // 약간 여유
-#define BASE_MAX_DEPTH 6            // 초중반 깊이 제한
-#define LATEGAME_DEPTH 12           // 후반 최대 깊이
-#define MOVE_ARRAY_SIZE 128         // Move 후보 제한
+static const double TIME_LIMIT = 2.6;
+#define MOVE_ARRAY_SIZE 128
 
 static double elapsed_time() {
     struct timespec now;
@@ -79,119 +77,16 @@ static int evaluate_board(char bd[BOARD_SIZE][BOARD_SIZE], char me)
 {
     char opp = (me == 'R' ? 'B' : 'R');
     int my_cnt = 0, opp_cnt = 0;
-    for (int i = 0; i < BOARD_SIZE; ++i) {
+    for (int i = 0; i < BOARD_SIZE; ++i)
         for (int j = 0; j < BOARD_SIZE; ++j) {
             if      (bd[i][j] == me)  ++my_cnt;
             else if (bd[i][j] == opp) ++opp_cnt;
         }
-    }
     int piece_diff = my_cnt - opp_cnt;
     int my_mob = mobility(bd, me);
     int opp_mob = mobility(bd, opp);
     int mob_diff = my_mob - opp_mob;
     return piece_diff * 100 + mob_diff * 10;
-}
-
-static int has_moves(char bd[BOARD_SIZE][BOARD_SIZE], char player)
-{
-    for (int r = 0; r < BOARD_SIZE; ++r) {
-        for (int c = 0; c < BOARD_SIZE; ++c) {
-            if (bd[r][c] == player) {
-                for (int d = 0; d < 8; ++d) {
-                    int nr = r + directions[d][0], nc = c + directions[d][1];
-                    for (int step = 1; step <= 2; ++step,
-                        nr += directions[d][0], nc += directions[d][1]) {
-                        if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE)
-                            break;
-                        if (bd[nr][nc] == '.') return 1;
-                    }
-                }
-            }
-        }
-    }
-    return 0;
-}
-
-static int alpha_beta(char bd[BOARD_SIZE][BOARD_SIZE],
-                      char me, char player,
-                      int depth, int alpha, int beta)
-{
-    if (time_exceeded())
-        return evaluate_board(bd, me);
-    if (depth == 0)
-        return evaluate_board(bd, me);
-
-    char opp = (player == 'R' ? 'B' : 'R');
-
-    if (!has_moves(bd, player)) {
-        if (!has_moves(bd, opp)) {
-            int my_cnt = 0, opp_cnt = 0;
-            for (int i = 0; i < BOARD_SIZE; ++i)
-                for (int j = 0; j < BOARD_SIZE; ++j) {
-                    if      (bd[i][j] == me)  ++my_cnt;
-                    else if (bd[i][j] == opp) ++opp_cnt;
-                }
-            if      (my_cnt > opp_cnt) return  INF/2;
-            else if (my_cnt < opp_cnt) return -INF/2;
-            else                      return  0;
-        }
-        int val = -alpha_beta(bd, me, opp, depth, -beta, -alpha);
-        return val;
-    }
-
-    int best_val = -INF;
-    typedef struct { int r1, c1, r2, c2, static_score; } Move;
-    Move all_moves[MOVE_ARRAY_SIZE];
-    int move_cnt = 0;
-
-    for (int r = 0; r < BOARD_SIZE; ++r) {
-        for (int c = 0; c < BOARD_SIZE; ++c) {
-            if (bd[r][c] != player) continue;
-            for (int d = 0; d < 8; ++d) {
-                int nr = r + directions[d][0], nc = c + directions[d][1];
-                for (int step = 1; step <= 2; ++step,
-                     nr += directions[d][0], nc += directions[d][1]) {
-                    if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) break;
-                    if (bd[nr][nc] != '.') continue;
-                    if (move_cnt >= MOVE_ARRAY_SIZE) break;
-                    char sim[BOARD_SIZE][BOARD_SIZE];
-                    copy_board(sim, bd);
-                    apply_move_sim(sim, r, c, nr, nc, player, step == 2);
-                    int st_score = evaluate_board(sim, player);
-                    all_moves[move_cnt++] = (Move){r, c, nr, nc, st_score};
-                }
-            }
-        }
-    }
-
-    // 선택 정렬 내림차순
-    for (int i = 0; i < move_cnt; ++i) {
-        int maxj = i;
-        for (int j = i + 1; j < move_cnt; ++j) {
-            if (all_moves[j].static_score > all_moves[maxj].static_score)
-                maxj = j;
-        }
-        if (maxj != i) {
-            Move tmp = all_moves[i];
-            all_moves[i] = all_moves[maxj];
-            all_moves[maxj] = tmp;
-        }
-    }
-
-    for (int i = 0; i < move_cnt; ++i) {
-        int r1 = all_moves[i].r1, c1 = all_moves[i].c1;
-        int r2 = all_moves[i].r2, c2 = all_moves[i].c2;
-        char sim[BOARD_SIZE][BOARD_SIZE];
-        copy_board(sim, bd);
-        apply_move_sim(sim, r1, c1, r2, c2, player,
-            (abs(r1 - r2) > 1 || abs(c1 - c2) > 1));
-        int val = -alpha_beta(sim, me, opp, depth - 1, -beta, -alpha);
-        if (val > best_val) best_val = val;
-        if (best_val > alpha) alpha = best_val;
-        if (alpha >= beta) break;
-        if (time_exceeded()) break;
-    }
-    return best_val;
 }
 
 int generate_move(char board[BOARD_SIZE][BOARD_SIZE], char player_color,
@@ -201,96 +96,76 @@ int generate_move(char board[BOARD_SIZE][BOARD_SIZE], char player_color,
 
     char me = player_color;
     char opp = (me == 'R' ? 'B' : 'R');
-    int best_score_overall = -INF;
-    int best_r1 = -1, best_c1 = -1, best_r2 = -1, best_c2 = -1;
+    int best_score = -INF;
+    int br1 = -1, bc1 = -1, br2 = -1, bc2 = -1;
 
-    // 전체 돌 개수로 late game 판단
-    int piece_count = 0;
-    for (int i = 0; i < BOARD_SIZE; ++i)
-        for (int j = 0; j < BOARD_SIZE; ++j)
-            if (board[i][j] == 'R' || board[i][j] == 'B') piece_count++;
-
-    int max_depth = BASE_MAX_DEPTH;
-    if (piece_count <= 14) max_depth = LATEGAME_DEPTH; // 후반엔 깊이 증가
-
-    for (int depth = 1; depth <= max_depth; ++depth) {
-        if (time_exceeded()) break;
-        int local_best_score = -INF;
-        int local_r1 = -1, local_c1 = -1, local_r2 = -1, local_c2 = -1;
-
-        typedef struct { int r1, c1, r2, c2, static_score; } Move;
-        Move all_moves[MOVE_ARRAY_SIZE];
-        int move_cnt = 0;
-
-        for (int r = 0; r < BOARD_SIZE; ++r) {
-            for (int c = 0; c < BOARD_SIZE; ++c) {
-                if (board[r][c] != me) continue;
+    // 내 모든 수
+    for (int r = 0; r < BOARD_SIZE; ++r)
+        for (int c = 0; c < BOARD_SIZE; ++c)
+            if (board[r][c] == me)
                 for (int d = 0; d < 8; ++d) {
                     int nr = r + directions[d][0], nc = c + directions[d][1];
                     for (int step = 1; step <= 2; ++step,
                          nr += directions[d][0], nc += directions[d][1]) {
-                        if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) break;
-                        if (board[nr][nc] != '.') continue;
-                        if (move_cnt >= MOVE_ARRAY_SIZE) break;
+
+                        if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE ||
+                            board[nr][nc] != '.')
+                            continue;
+                        if (time_exceeded()) goto END_SEARCH;
+
+                        // 시뮬레이션: 내 수 두기
                         char sim[BOARD_SIZE][BOARD_SIZE];
                         copy_board(sim, board);
-                        apply_move_sim(sim, r, c, nr, nc, me,
-                            (abs(r - nr) > 1 || abs(c - nc) > 1));
-                        int st_score = evaluate_board(sim, me);
-                        all_moves[move_cnt++] = (Move){r, c, nr, nc, st_score};
+                        apply_move_sim(sim, r, c, nr, nc, me, step == 2);
+
+                        // 상대의 최선 응수(그리디) 찾기
+                        int worst_for_me = INF; // 내 입장에서 가장 안 좋은 점수
+                        int found_opp = 0;
+
+                        for (int rr = 0; rr < BOARD_SIZE; ++rr)
+                            for (int cc = 0; cc < BOARD_SIZE; ++cc)
+                                if (sim[rr][cc] == opp)
+                                    for (int dd = 0; dd < 8; ++dd) {
+                                        int nnr = rr + directions[dd][0], nnc = cc + directions[dd][1];
+                                        for (int s = 1; s <= 2; ++s,
+                                            nnr += directions[dd][0], nnc += directions[dd][1]) {
+                                            if (nnr < 0 || nnr >= BOARD_SIZE || nnc < 0 || nnc >= BOARD_SIZE ||
+                                                sim[nnr][nnc] != '.')
+                                                continue;
+                                            char sim2[BOARD_SIZE][BOARD_SIZE];
+                                            copy_board(sim2, sim);
+                                            apply_move_sim(sim2, rr, cc, nnr, nnc, opp, s == 2);
+
+                                            int score = evaluate_board(sim2, me);
+                                            if (score < worst_for_me) worst_for_me = score;
+                                            found_opp = 1;
+                                        }
+                                    }
+                        if (!found_opp) {
+                            // 상대가 둘 수 없으면 평가 함수(즉시 이길 수 있음)
+                            worst_for_me = evaluate_board(sim, me);
+                        }
+
+                        // 내 수의 결과 중 가장 좋은 것을 선택
+                        if (worst_for_me > best_score) {
+                            best_score = worst_for_me;
+                            br1 = r; bc1 = c; br2 = nr; bc2 = nc;
+                        }
                     }
                 }
-            }
-        }
+END_SEARCH:
 
-        // 선택 정렬 내림차순
-        for (int i = 0; i < move_cnt; ++i) {
-            int maxj = i;
-            for (int j = i + 1; j < move_cnt; ++j) {
-                if (all_moves[j].static_score > all_moves[maxj].static_score)
-                    maxj = j;
-            }
-            if (maxj != i) {
-                Move tmp = all_moves[i];
-                all_moves[i] = all_moves[maxj];
-                all_moves[maxj] = tmp;
-            }
-        }
-
-        for (int i = 0; i < move_cnt; ++i) {
-            if (time_exceeded()) break;
-            int r1 = all_moves[i].r1, c1 = all_moves[i].c1;
-            int r2 = all_moves[i].r2, c2 = all_moves[i].c2;
-            char sim[BOARD_SIZE][BOARD_SIZE];
-            copy_board(sim, board);
-            apply_move_sim(sim, r1, c1, r2, c2, me,
-                (abs(r1 - r2) > 1 || abs(c1 - c2) > 1));
-            int score = -alpha_beta(sim, me, opp, depth - 1, -INF, +INF);
-            if (score > local_best_score) {
-                local_best_score = score;
-                local_r1 = r1; local_c1 = c1;
-                local_r2 = r2; local_c2 = c2;
-            }
-        }
-
-        if (!time_exceeded() && local_r1 >= 0) {
-            best_score_overall = local_best_score;
-            best_r1 = local_r1; best_c1 = local_c1;
-            best_r2 = local_r2; best_c2 = local_c2;
-        } else {
-            break;
-        }
-    }
-
-    if (best_r1 < 0) {
+    if (br1 < 0) {
         *out_r1 = *out_c1 = *out_r2 = *out_c2 = 0;
         return 0;
     } else {
-        *out_r1 = best_r1; *out_c1 = best_c1;
-        *out_r2 = best_r2; *out_c2 = best_c2;
+        *out_r1 = br1; *out_c1 = bc1;
+        *out_r2 = br2; *out_c2 = bc2;
         return 1;
     }
 }
+
+
 
 
 static int connect_to_server(const char *ip, const char *port) {
