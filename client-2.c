@@ -19,14 +19,14 @@
 
 static char board_arr[BOARD_SIZE][BOARD_SIZE];
 
-/* =========================
-    라즈베리파이용 빠른 Iterative Deepening + Alpha-Beta
-   ========================= */
+
 #define INF 1000000000
+
 static struct timespec start_time;
-static const double TIME_LIMIT = 2.6; // 2.6초로 살짝 여유 (원래 2.9초)
-#define MAX_DEPTH 6                  // 탐색 깊이 제한 (라즈베리파이 추천 5~6)
-#define MOVE_ARRAY_SIZE 128          // Move 후보 개수 제한
+static const double TIME_LIMIT = 2.8; // 약간 여유
+#define BASE_MAX_DEPTH 6            // 초중반 깊이 제한
+#define LATEGAME_DEPTH 12           // 후반 최대 깊이
+#define MOVE_ARRAY_SIZE 128         // Move 후보 제한
 
 static double elapsed_time() {
     struct timespec now;
@@ -34,24 +34,19 @@ static double elapsed_time() {
     return (now.tv_sec - start_time.tv_sec)
          + (now.tv_nsec - start_time.tv_nsec) * 1e-9;
 }
-static int time_exceeded() {
-    return elapsed_time() >= TIME_LIMIT;
-}
+static int time_exceeded() { return elapsed_time() >= TIME_LIMIT; }
 
 static inline void copy_board(char dst[BOARD_SIZE][BOARD_SIZE], char src[BOARD_SIZE][BOARD_SIZE]) {
     memcpy(dst, src, BOARD_SIZE * BOARD_SIZE);
 }
 
-static void apply_move_sim(char bd[BOARD_SIZE][BOARD_SIZE],
-                           int r1, int c1, int r2, int c2,
-                           char me, int is_jump)
+static void apply_move_sim(char bd[BOARD_SIZE][BOARD_SIZE], int r1, int c1, int r2, int c2, char me, int is_jump)
 {
     if (is_jump) bd[r1][c1] = '.';
     bd[r2][c2] = me;
     char opp = (me == 'R' ? 'B' : 'R');
     for (int d = 0; d < 8; ++d) {
-        int nr = r2 + directions[d][0];
-        int nc = c2 + directions[d][1];
+        int nr = r2 + directions[d][0], nc = c2 + directions[d][1];
         if (0 <= nr && nr < BOARD_SIZE && 0 <= nc && nc < BOARD_SIZE && bd[nr][nc] == opp)
             bd[nr][nc] = me;
     }
@@ -169,7 +164,7 @@ static int alpha_beta(char bd[BOARD_SIZE][BOARD_SIZE],
         }
     }
 
-    // 선택 정렬로 내림차순 정렬(버블정렬보다 빠름)
+    // 선택 정렬 내림차순
     for (int i = 0; i < move_cnt; ++i) {
         int maxj = i;
         for (int j = i + 1; j < move_cnt; ++j) {
@@ -209,7 +204,16 @@ int generate_move(char board[BOARD_SIZE][BOARD_SIZE], char player_color,
     int best_score_overall = -INF;
     int best_r1 = -1, best_c1 = -1, best_r2 = -1, best_c2 = -1;
 
-    for (int depth = 1; depth <= MAX_DEPTH; ++depth) {
+    // 전체 돌 개수로 late game 판단
+    int piece_count = 0;
+    for (int i = 0; i < BOARD_SIZE; ++i)
+        for (int j = 0; j < BOARD_SIZE; ++j)
+            if (board[i][j] == 'R' || board[i][j] == 'B') piece_count++;
+
+    int max_depth = BASE_MAX_DEPTH;
+    if (piece_count <= 14) max_depth = LATEGAME_DEPTH; // 후반엔 깊이 증가
+
+    for (int depth = 1; depth <= max_depth; ++depth) {
         if (time_exceeded()) break;
         int local_best_score = -INF;
         int local_r1 = -1, local_c1 = -1, local_r2 = -1, local_c2 = -1;
@@ -239,7 +243,7 @@ int generate_move(char board[BOARD_SIZE][BOARD_SIZE], char player_color,
             }
         }
 
-        // 선택 정렬(내림차순)
+        // 선택 정렬 내림차순
         for (int i = 0; i < move_cnt; ++i) {
             int maxj = i;
             for (int j = i + 1; j < move_cnt; ++j) {
