@@ -16,17 +16,17 @@
 #include <math.h>
 
 #define SIMULATION_TIME 3.0
-const int directions[8][2] = {
-    {-1,-1},{-1,0},{-1,1},{0,-1},{0,1},{1,-1},{1,0},{1,1}
-};
+
 static char board_arr[BOARD_SIZE][BOARD_SIZE];
 
 /* =========================
-    Iterative Deepening + Alpha-Beta 가지치기
+    라즈베리파이용 빠른 Iterative Deepening + Alpha-Beta
    ========================= */
 #define INF 1000000000
 static struct timespec start_time;
-static const double TIME_LIMIT = 2.9; // 초
+static const double TIME_LIMIT = 2.6; // 2.6초로 살짝 여유 (원래 2.9초)
+#define MAX_DEPTH 6                  // 탐색 깊이 제한 (라즈베리파이 추천 5~6)
+#define MOVE_ARRAY_SIZE 128          // Move 후보 개수 제한
 
 static double elapsed_time() {
     struct timespec now;
@@ -146,7 +146,7 @@ static int alpha_beta(char bd[BOARD_SIZE][BOARD_SIZE],
 
     int best_val = -INF;
     typedef struct { int r1, c1, r2, c2, static_score; } Move;
-    Move all_moves[256];
+    Move all_moves[MOVE_ARRAY_SIZE];
     int move_cnt = 0;
 
     for (int r = 0; r < BOARD_SIZE; ++r) {
@@ -158,6 +158,7 @@ static int alpha_beta(char bd[BOARD_SIZE][BOARD_SIZE],
                      nr += directions[d][0], nc += directions[d][1]) {
                     if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) break;
                     if (bd[nr][nc] != '.') continue;
+                    if (move_cnt >= MOVE_ARRAY_SIZE) break;
                     char sim[BOARD_SIZE][BOARD_SIZE];
                     copy_board(sim, bd);
                     apply_move_sim(sim, r, c, nr, nc, player, step == 2);
@@ -168,13 +169,17 @@ static int alpha_beta(char bd[BOARD_SIZE][BOARD_SIZE],
         }
     }
 
+    // 선택 정렬로 내림차순 정렬(버블정렬보다 빠름)
     for (int i = 0; i < move_cnt; ++i) {
+        int maxj = i;
         for (int j = i + 1; j < move_cnt; ++j) {
-            if (all_moves[j].static_score > all_moves[i].static_score) {
-                Move tmp = all_moves[i];
-                all_moves[i] = all_moves[j];
-                all_moves[j] = tmp;
-            }
+            if (all_moves[j].static_score > all_moves[maxj].static_score)
+                maxj = j;
+        }
+        if (maxj != i) {
+            Move tmp = all_moves[i];
+            all_moves[i] = all_moves[maxj];
+            all_moves[maxj] = tmp;
         }
     }
 
@@ -204,13 +209,13 @@ int generate_move(char board[BOARD_SIZE][BOARD_SIZE], char player_color,
     int best_score_overall = -INF;
     int best_r1 = -1, best_c1 = -1, best_r2 = -1, best_c2 = -1;
 
-    for (int depth = 1; depth <= 8; ++depth) {
+    for (int depth = 1; depth <= MAX_DEPTH; ++depth) {
         if (time_exceeded()) break;
         int local_best_score = -INF;
         int local_r1 = -1, local_c1 = -1, local_r2 = -1, local_c2 = -1;
 
         typedef struct { int r1, c1, r2, c2, static_score; } Move;
-        Move all_moves[256];
+        Move all_moves[MOVE_ARRAY_SIZE];
         int move_cnt = 0;
 
         for (int r = 0; r < BOARD_SIZE; ++r) {
@@ -222,6 +227,7 @@ int generate_move(char board[BOARD_SIZE][BOARD_SIZE], char player_color,
                          nr += directions[d][0], nc += directions[d][1]) {
                         if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) break;
                         if (board[nr][nc] != '.') continue;
+                        if (move_cnt >= MOVE_ARRAY_SIZE) break;
                         char sim[BOARD_SIZE][BOARD_SIZE];
                         copy_board(sim, board);
                         apply_move_sim(sim, r, c, nr, nc, me,
@@ -233,13 +239,17 @@ int generate_move(char board[BOARD_SIZE][BOARD_SIZE], char player_color,
             }
         }
 
+        // 선택 정렬(내림차순)
         for (int i = 0; i < move_cnt; ++i) {
+            int maxj = i;
             for (int j = i + 1; j < move_cnt; ++j) {
-                if (all_moves[j].static_score > all_moves[i].static_score) {
-                    Move tmp = all_moves[i];
-                    all_moves[i] = all_moves[j];
-                    all_moves[j] = tmp;
-                }
+                if (all_moves[j].static_score > all_moves[maxj].static_score)
+                    maxj = j;
+            }
+            if (maxj != i) {
+                Move tmp = all_moves[i];
+                all_moves[i] = all_moves[maxj];
+                all_moves[maxj] = tmp;
             }
         }
 
@@ -277,10 +287,6 @@ int generate_move(char board[BOARD_SIZE][BOARD_SIZE], char player_color,
         return 1;
     }
 }
-
-// --- 이하 클라이언트 네트워크/프로토콜/LED 등 기존 코드 절대 수정 금지!! ---
-// connect_to_server, client_run 등 이하 코드
-// ... (기존 client-2.c의 나머지 부분 그대로 복붙)
 
 
 static int connect_to_server(const char *ip, const char *port) {
