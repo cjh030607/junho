@@ -12,148 +12,157 @@
 #include <sys/socket.h>
 #include <netdb.h>
 #include <arpa/inet.h>
-#include <time.h>
-#include <math.h>
 
 #define SIMULATION_TIME 3.0
 
 static char board_arr[BOARD_SIZE][BOARD_SIZE];
 
+#include <math.h>
+#include <time.h>
 
-#define INF 1000000000
 
-static struct timespec start_time;
-static const double TIME_LIMIT = 2.6;
-#define MOVE_ARRAY_SIZE 128
-
-static double elapsed_time() {
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    return (now.tv_sec - start_time.tv_sec)
-         + (now.tv_nsec - start_time.tv_nsec) * 1e-9;
+static double get_center_bonus(int r, int c) {
+    return 4.0 - (fabs(r - 3.5) + fabs(c - 3.5));
 }
-static int time_exceeded() { return elapsed_time() >= TIME_LIMIT; }
 
-static inline void copy_board(char dst[BOARD_SIZE][BOARD_SIZE], char src[BOARD_SIZE][BOARD_SIZE]) {
+static int is_corner(int r, int c) {
+    return (r == 0 || r == BOARD_SIZE - 1) && (c == 0 || c == BOARD_SIZE - 1);
+}
+
+static int mobility(char bd[BOARD_SIZE][BOARD_SIZE], char me) {
+    int cnt = 0;
+    for (int r = 0; r < BOARD_SIZE; ++r)
+        for (int c = 0; c < BOARD_SIZE; ++c)
+            if (bd[r][c] == me)
+                for (int d = 0; d < 8; ++d)
+                    for (int step = 1; step <= 2; ++step) {
+                        int nr = r + step * directions[d][0];
+                        int nc = c + step * directions[d][1];
+                        if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE &&
+                            bd[nr][nc] == '.') {
+                            ++cnt;
+                            break;
+                        }
+                    }
+    return cnt;
+}
+
+static void copy_board(char dst[BOARD_SIZE][BOARD_SIZE], char src[BOARD_SIZE][BOARD_SIZE]) {
     memcpy(dst, src, BOARD_SIZE * BOARD_SIZE);
 }
 
-static void apply_move_sim(char bd[BOARD_SIZE][BOARD_SIZE], int r1, int c1, int r2, int c2, char me, int is_jump)
+static void apply_move_sim(char bd[BOARD_SIZE][BOARD_SIZE],
+                           int r1, int c1, int r2, int c2,
+                           char me, int is_jump)
 {
     if (is_jump) bd[r1][c1] = '.';
     bd[r2][c2] = me;
     char opp = (me == 'R' ? 'B' : 'R');
     for (int d = 0; d < 8; ++d) {
-        int nr = r2 + directions[d][0], nc = c2 + directions[d][1];
+        int nr = r2 + directions[d][0];
+        int nc = c2 + directions[d][1];
         if (0 <= nr && nr < BOARD_SIZE && 0 <= nc && nc < BOARD_SIZE && bd[nr][nc] == opp)
             bd[nr][nc] = me;
     }
 }
 
-static int mobility(char bd[BOARD_SIZE][BOARD_SIZE], char me)
-{
-    int cnt = 0;
-    for (int r = 0; r < BOARD_SIZE; ++r) {
-        for (int c = 0; c < BOARD_SIZE; ++c) {
-            if (bd[r][c] == me) {
-                for (int d = 0; d < 8; ++d) {
-                    int nr = r + directions[d][0], nc = c + directions[d][1];
-                    for (int step = 1; step <= 2; ++step,
-                        nr += directions[d][0], nc += directions[d][1]) {
-                        if (0 <= nr && nr < BOARD_SIZE && 0 <= nc && nc < BOARD_SIZE
-                            && bd[nr][nc] == '.') {
-                            ++cnt; goto NEXT_CELL;
-                        }
-                    }
-                }
-            }
-        NEXT_CELL:;
-        }
-    }
-    return cnt;
-}
-
-static int evaluate_board(char bd[BOARD_SIZE][BOARD_SIZE], char me)
-{
+static int evaluate_board(char bd[BOARD_SIZE][BOARD_SIZE], char me) {
     char opp = (me == 'R' ? 'B' : 'R');
     int my_cnt = 0, opp_cnt = 0;
     for (int i = 0; i < BOARD_SIZE; ++i)
         for (int j = 0; j < BOARD_SIZE; ++j) {
-            if      (bd[i][j] == me)  ++my_cnt;
+            if (bd[i][j] == me)  ++my_cnt;
             else if (bd[i][j] == opp) ++opp_cnt;
         }
     int piece_diff = my_cnt - opp_cnt;
     int my_mob = mobility(bd, me);
     int opp_mob = mobility(bd, opp);
-    int mob_diff = my_mob - opp_mob;
-    return piece_diff * 100 + mob_diff * 10;
+    return piece_diff * 100 + (my_mob - opp_mob) * 10;
 }
 
 int generate_move(char board[BOARD_SIZE][BOARD_SIZE], char player_color,
                   int *out_r1, int *out_c1, int *out_r2, int *out_c2)
 {
-    clock_gettime(CLOCK_MONOTONIC, &start_time);
-
     char me = player_color;
     char opp = (me == 'R' ? 'B' : 'R');
-    int best_score = -INF;
+    int best_score = -10000000;
     int br1 = -1, bc1 = -1, br2 = -1, bc2 = -1;
 
-    // 내 모든 수
-    for (int r = 0; r < BOARD_SIZE; ++r)
-        for (int c = 0; c < BOARD_SIZE; ++c)
-            if (board[r][c] == me)
-                for (int d = 0; d < 8; ++d) {
-                    int nr = r + directions[d][0], nc = c + directions[d][1];
-                    for (int step = 1; step <= 2; ++step,
-                         nr += directions[d][0], nc += directions[d][1]) {
+    for (int r = 0; r < BOARD_SIZE; ++r) {
+        for (int c = 0; c < BOARD_SIZE; ++c) {
+            if (board[r][c] != me) continue;
+            for (int d = 0; d < 8; ++d) {
+                for (int step = 1; step <= 2; ++step) {
+                    int nr = r + step * directions[d][0];
+                    int nc = c + step * directions[d][1];
+                    if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) continue;
+                    if (board[nr][nc] != '.') continue;
 
-                        if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE ||
-                            board[nr][nc] != '.')
-                            continue;
-                        if (time_exceeded()) goto END_SEARCH;
+                    char sim[BOARD_SIZE][BOARD_SIZE];
+                    copy_board(sim, board);
+                    apply_move_sim(sim, r, c, nr, nc, me, step == 2);
 
-                        // 시뮬레이션: 내 수 두기
-                        char sim[BOARD_SIZE][BOARD_SIZE];
-                        copy_board(sim, board);
-                        apply_move_sim(sim, r, c, nr, nc, me, step == 2);
+                    int worst_for_me = 10000000;
+                    int opp_move_found = 0;
 
-                        // 상대의 최선 응수(그리디) 찾기
-                        int worst_for_me = INF; // 내 입장에서 가장 안 좋은 점수
-                        int found_opp = 0;
+                    for (int rr = 0; rr < BOARD_SIZE; ++rr) {
+                        for (int cc = 0; cc < BOARD_SIZE; ++cc) {
+                            if (sim[rr][cc] != opp) continue;
+                            for (int dd = 0; dd < 8; ++dd) {
+                                for (int s = 1; s <= 2; ++s) {
+                                    int nnr = rr + s * directions[dd][0];
+                                    int nnc = cc + s * directions[dd][1];
+                                    if (nnr < 0 || nnr >= BOARD_SIZE || nnc < 0 || nnc >= BOARD_SIZE) continue;
+                                    if (sim[nnr][nnc] != '.') continue;
 
-                        for (int rr = 0; rr < BOARD_SIZE; ++rr)
-                            for (int cc = 0; cc < BOARD_SIZE; ++cc)
-                                if (sim[rr][cc] == opp)
-                                    for (int dd = 0; dd < 8; ++dd) {
-                                        int nnr = rr + directions[dd][0], nnc = cc + directions[dd][1];
-                                        for (int s = 1; s <= 2; ++s,
-                                            nnr += directions[dd][0], nnc += directions[dd][1]) {
-                                            if (nnr < 0 || nnr >= BOARD_SIZE || nnc < 0 || nnc >= BOARD_SIZE ||
-                                                sim[nnr][nnc] != '.')
-                                                continue;
-                                            char sim2[BOARD_SIZE][BOARD_SIZE];
-                                            copy_board(sim2, sim);
-                                            apply_move_sim(sim2, rr, cc, nnr, nnc, opp, s == 2);
+                                    char sim2[BOARD_SIZE][BOARD_SIZE];
+                                    copy_board(sim2, sim);
+                                    apply_move_sim(sim2, rr, cc, nnr, nnc, opp, s == 2);
 
-                                            int score = evaluate_board(sim2, me);
-                                            if (score < worst_for_me) worst_for_me = score;
-                                            found_opp = 1;
-                                        }
-                                    }
-                        if (!found_opp) {
-                            // 상대가 둘 수 없으면 평가 함수(즉시 이길 수 있음)
-                            worst_for_me = evaluate_board(sim, me);
-                        }
+                                    int flips = 0;
+                                    for (int i = 0; i < BOARD_SIZE; ++i)
+                                        for (int j = 0; j < BOARD_SIZE; ++j)
+                                            if (sim[rr][cc] == opp && sim2[i][j] == me)
+                                                ++flips;
 
-                        // 내 수의 결과 중 가장 좋은 것을 선택
-                        if (worst_for_me > best_score) {
-                            best_score = worst_for_me;
-                            br1 = r; bc1 = c; br2 = nr; bc2 = nc;
+                                    int mobility_penalty = mobility(sim2, me) - mobility(sim2, opp);
+                                    double center_bonus = get_center_bonus(nnr, nnc);
+                                    int corner_penalty = is_corner(nnr, nnc) ? -8 : 0;
+
+                                    int score = evaluate_board(sim2, me)
+                                                - flips * 5
+                                                + mobility_penalty * 5
+                                                + (int)(center_bonus * 6)
+                                                + corner_penalty;
+
+                                    if (score < worst_for_me) worst_for_me = score;
+                                    opp_move_found = 1;
+                                }
+                            }
                         }
                     }
+
+                    if (!opp_move_found) {
+                        worst_for_me = evaluate_board(sim, me);
+                    }
+
+                    double my_center_bonus = get_center_bonus(nr, nc);
+                    int my_corner_penalty = is_corner(nr, nc) ? -8 : 0;
+                    int my_mobility_bonus = mobility(sim, me) - mobility(sim, opp);
+
+                    int final_score = worst_for_me
+                                    + (int)(my_center_bonus * 6)
+                                    + my_mobility_bonus * 4
+                                    + my_corner_penalty;
+
+                    if (final_score > best_score) {
+                        best_score = final_score;
+                        br1 = r; bc1 = c; br2 = nr; bc2 = nc;
+                    }
                 }
-END_SEARCH:
+            }
+        }
+    }
 
     if (br1 < 0) {
         *out_r1 = *out_c1 = *out_r2 = *out_c2 = 0;
@@ -164,8 +173,6 @@ END_SEARCH:
         return 1;
     }
 }
-
-
 
 
 static int connect_to_server(const char *ip, const char *port) {
@@ -192,7 +199,7 @@ static int connect_to_server(const char *ip, const char *port) {
     return sockfd;
 }
 
-int client_run(const char *ip, const char *port, const char *username) {
+int client_run(const char *ip, const char *port, const char *username, int use_led) {
     int sockfd = connect_to_server(ip, port);
     if (sockfd < 0) {
         fprintf(stderr, "Failed to connect to %s:%s\n", ip, port);
@@ -271,7 +278,10 @@ int client_run(const char *ip, const char *port, const char *username) {
                     const cJSON *jrow = cJSON_GetArrayItem(jbarr, i);
                     if (jrow && jrow->valuestring) {
                         memcpy(board_arr[i], jrow->valuestring, BOARD_SIZE);
-                        update_led_matrix(board_arr);
+                        if (use_led)
+                            {
+                                update_led_matrix(board_arr);
+                            }
                         char rowbuf[BOARD_SIZE+1];
                         memcpy(rowbuf, jrow->valuestring, BOARD_SIZE);
                         rowbuf[BOARD_SIZE] = '\0';
@@ -334,7 +344,9 @@ int client_run(const char *ip, const char *port, const char *username) {
                         memcpy(board_arr[i], jrow->valuestring, BOARD_SIZE);
                     }
                 }
-                update_led_matrix(board_arr);
+                if (use_led){
+                    update_led_matrix(board_arr);
+                }
             }
             cJSON_Delete(msg);
             continue;
@@ -356,7 +368,9 @@ int client_run(const char *ip, const char *port, const char *username) {
                         printf("%s\n", rowbuf);
                     }
                 }
-                update_led_matrix(board_arr);
+                if (use_led) {
+                    update_led_matrix(board_arr);
+                }
             }
           // score
             cJSON *jscores = cJSON_GetObjectItem(msg, "scores");
